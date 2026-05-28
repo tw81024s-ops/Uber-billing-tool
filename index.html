@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>UBER 帳單整理工具</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css" />
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="logo-mark" aria-hidden="true">
+      <svg viewBox="0 0 32 32" width="28" height="28"><circle cx="16" cy="16" r="14" fill="#FF1F8F"/><path d="M9 17.5l4.5 4.5L23 12" stroke="#fff" stroke-width="2.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="brand-text">
+      <h1>UBER 帳單整理工具</h1>
+      <p class="brand-sub">一鍵合併帳單、自動比對貨故請賠、產出可下載的 Excel</p>
+    </div>
+  </div>
+  <div class="topbar-meta">
+    <span class="chip chip-soft">v1.0</span>
+    <a class="chip chip-link" href="https://github.com/" target="_blank" rel="noopener">GitHub ↗</a>
+  </div>
+</header>
+
+<main class="container">
+
+  <!-- 步驟 1：上傳原始帳單 -->
+  <section class="step" data-step="1">
+    <div class="step-head">
+      <span class="step-num">01</span>
+      <div>
+        <h2>上傳 Uber 原始帳單</h2>
+        <p class="muted">支援 .xlsx／.xls／.csv，會以「商家訂單 ID」合併、加總「帳單金額」</p>
+      </div>
+    </div>
+    <div class="drop" id="dropMain">
+      <input type="file" id="fileMain" accept=".xlsx,.xls,.csv" hidden />
+      <div class="drop-inner">
+        <div class="drop-ico">📥</div>
+        <div class="drop-title">將檔案拖到這裡，或<button class="link" type="button" data-pick="fileMain">點此選擇</button></div>
+        <div class="drop-hint" id="hintMain">尚未選擇檔案</div>
+      </div>
+    </div>
+
+    <!-- 智慧判讀欄位區（動態出現） -->
+    <div class="field-map hidden" id="mapMain">
+      <h3 class="mini-h">智慧判讀欄位<span class="muted-inline">（已自動猜，可手動修正）</span></h3>
+      <div class="map-grid" id="mapGridMain"></div>
+      <div class="map-actions">
+        <button class="btn" id="btnPreview">預覽合併結果</button>
+      </div>
+    </div>
+
+    <!-- 合併結果摘要 -->
+    <div class="result hidden" id="resultMain">
+      <div class="stat-row">
+        <div class="stat"><div class="stat-num" id="srcRows">—</div><div class="stat-lbl">原始筆數</div></div>
+        <div class="stat-arrow">→</div>
+        <div class="stat"><div class="stat-num" id="mergedRows">—</div><div class="stat-lbl">合併後筆數</div></div>
+        <div class="stat-arrow">＝</div>
+        <div class="stat"><div class="stat-num" id="dedupedCount">—</div><div class="stat-lbl">合併掉</div></div>
+      </div>
+      <div class="totals">
+        <span>原始金額總和 <b id="srcTotal">—</b></span>
+        <span class="divider">｜</span>
+        <span>合併後總和 <b id="mergedTotal">—</b></span>
+        <span class="divider">｜</span>
+        <span id="reconBadge" class="badge ok">總額一致 ✓</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 步驟 2：上傳貨故請賠 -->
+  <section class="step" data-step="2">
+    <div class="step-head">
+      <span class="step-num">02</span>
+      <div>
+        <h2>上傳貨故請賠檔（可選）</h2>
+        <p class="muted">自動產生「貨故請賠」「貨故運費回溯」調整明細</p>
+      </div>
+    </div>
+    <div class="drop" id="dropHuogu">
+      <input type="file" id="fileHuogu" accept=".xlsx,.xls,.csv" hidden />
+      <div class="drop-inner">
+        <div class="drop-ico">📋</div>
+        <div class="drop-title">將貨故請賠檔拖到這裡，或<button class="link" type="button" data-pick="fileHuogu">點此選擇</button></div>
+        <div class="drop-hint" id="hintHuogu">未上傳（可略過）</div>
+      </div>
+    </div>
+    <div class="field-map hidden" id="mapHuogu">
+      <h3 class="mini-h">智慧判讀欄位<span class="muted-inline">（已自動猜，可手動修正）</span></h3>
+      <div class="map-grid" id="mapGridHuogu"></div>
+    </div>
+  </section>
+
+  <!-- 步驟 3：上傳虛扣/重複收款（可選） -->
+  <section class="step" data-step="3">
+    <div class="step-head">
+      <span class="step-num">03</span>
+      <div>
+        <h2>上傳虛扣／重複收款檔（可選）</h2>
+        <p class="muted">將重複收款 Summary 的應退金額列入「待人工確認」由 user 自行拆分</p>
+      </div>
+    </div>
+    <div class="drop" id="dropXukou">
+      <input type="file" id="fileXukou" accept=".xlsx,.xls,.csv" hidden />
+      <div class="drop-inner">
+        <div class="drop-ico">🔁</div>
+        <div class="drop-title">將虛扣／重複收款檔拖到這裡，或<button class="link" type="button" data-pick="fileXukou">點此選擇</button></div>
+        <div class="drop-hint" id="hintXukou">未上傳（可略過）</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 步驟 4：產出 -->
+  <section class="step step-final" data-step="4">
+    <div class="step-head">
+      <span class="step-num">04</span>
+      <div>
+        <h2>產出與下載</h2>
+        <p class="muted">Final 分頁（左塊合併帳單／右塊調整明細）＋ 待人工確認分頁</p>
+      </div>
+    </div>
+
+    <div class="preview hidden" id="previewBox">
+      <div class="preview-tabs">
+        <button class="tab active" data-tab="left">合併帳單（左塊）</button>
+        <button class="tab" data-tab="right">調整明細（右塊）</button>
+        <button class="tab" data-tab="manual">待人工確認</button>
+      </div>
+      <div class="preview-body">
+        <div class="tab-pane active" id="paneLeft"></div>
+        <div class="tab-pane" id="paneRight"></div>
+        <div class="tab-pane" id="paneManual"></div>
+      </div>
+    </div>
+
+    <div class="cta-row">
+      <button class="btn btn-primary btn-lg" id="btnExport" disabled>
+        <span>下載 Excel</span>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 4v12m0 0l-5-5m5 5l5-5M5 20h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button class="btn btn-ghost" id="btnReset">重新開始</button>
+    </div>
+  </section>
+
+</main>
+
+<footer class="footer">
+  <p>所有資料在你的瀏覽器內處理，<b>不會上傳到任何伺服器</b>。</p>
+  <p class="muted-small">UBER 帳單整理工具 · Made with 🩷</p>
+</footer>
+
+<!-- Toast -->
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
