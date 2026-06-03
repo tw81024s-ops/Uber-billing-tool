@@ -27,6 +27,28 @@ function toast(msg, type){
   t._timer = setTimeout(()=>{ t.className='toast'; }, 2400);
 }
 
+// 讓 UI 有機會更新（不然同步重活會讓進度條卡住）
+function tick(){
+  return new Promise(r => requestAnimationFrame(()=>setTimeout(r, 0)));
+}
+
+// 進度條控制：scope = 'main' | 'huogu' | 'xukou'；pct=null 隱藏
+function setProgress(scope, pct, label){
+  const el = document.getElementById('prog_' + scope);
+  if (!el) return;
+  if (pct == null){
+    el.classList.add('hidden');
+    el.classList.remove('done');
+    return;
+  }
+  el.classList.remove('hidden');
+  const pctNum = Math.max(0, Math.min(1, pct));
+  el.querySelector('.bar-fill').style.width = (pctNum*100).toFixed(0) + '%';
+  el.querySelector('.bar-label').textContent = label || `處理中… ${(pctNum*100).toFixed(0)}%`;
+  if (pctNum >= 1) el.classList.add('done');
+  else el.classList.remove('done');
+}
+
 function fmt(n){
   if (n===null || n===undefined || n==='') return '';
   if (typeof n !== 'number') return n;
@@ -174,14 +196,20 @@ function renderMapping(containerEl, headers, fields, mapping, onChange){
 
 // 1) 主檔處理：讀取＋判讀
 async function loadMain(file){
-  $('#hintMain').textContent = '讀取中…';
+  $('#hintMain').textContent = '處理中…';
+  setProgress('main', 0.05, '讀取檔案中…');
+  await tick();
   try{
     const wb = await readWorkbook(file);
+    setProgress('main', 0.45, '解析 Excel 內容…');
+    await tick();
     const ws = wb.Sheets[wb.SheetNames[0]];
     const { headers, rows } = sheetToRows(ws);
     if (!headers.length || !rows.length){
       throw new Error('檔案無有效資料');
     }
+    setProgress('main', 0.85, `智慧判讀欄位中…（${rows.length.toLocaleString()} 筆）`);
+    await tick();
     state.main.headers = headers;
     state.main.rows = rows;
     state.main.mapping = detectColumns(headers, rows, [
@@ -195,53 +223,73 @@ async function loadMain(file){
     $('#mapMain').classList.remove('hidden');
     $('#dropMain').classList.add('is-loaded');
     $('#hintMain').textContent = `已讀取：${file.name} ｜ ${rows.length.toLocaleString()} 筆`;
+    setProgress('main', 1, '讀取完成 ✓');
+    await tick();
+    setTimeout(()=>setProgress('main', null), 900);
     toast('已讀取原始帳單');
   }catch(err){
     console.error(err);
+    setProgress('main', null);
     $('#hintMain').textContent = '讀取失敗：' + (err.message || err);
     toast('讀取失敗', 'err');
   }
 }
 
 // 2) 合併＋預覽
-function previewMerge(){
+async function previewMerge(){
   const m = state.main.mapping;
   if (!m.orderId || m.orderId.index < 0 || !m.amount || m.amount.index < 0){
     toast('請先選擇商家訂單 ID 與帳單金額欄位', 'err');
     return false;
   }
   const idCol = m.orderId.index, amtCol = m.amount.index;
-  const merged = new Map();   // orderId -> { amount, count }
+  const merged = new Map();
   let srcTotal = 0;
-  for (const r of state.main.rows){
-    const id = r[idCol];
-    if (id == null || id === '') continue;
-    const key = String(id).trim();
-    const amt = Number(r[amtCol]) || 0;
-    srcTotal += amt;
-    if (merged.has(key)){
-      const g = merged.get(key);
-      g.amount += amt;
-      g.count += 1;
-    } else {
-      merged.set(key, { orderId:key, amount:amt, count:1 });
+  const total = state.main.rows.length;
+  const CHUNK = 8000;
+
+  setProgress('main', 0, `合併中… 0 / ${total.toLocaleString()}`);
+  await tick();
+
+  for (let i=0; i<total; i+=CHUNK){
+    const end = Math.min(i+CHUNK, total);
+    for (let j=i; j<end; j++){
+      const r = state.main.rows[j];
+      const id = r[idCol];
+      if (id == null || id === '') continue;
+      const key = String(id).trim();
+      const amt = Number(r[amtCol]) || 0;
+      srcTotal += amt;
+      if (merged.has(key)){
+        const g = merged.get(key);
+        g.amount += amt;
+        g.count += 1;
+      } else {
+        merged.set(key, { orderId:key, amount:amt, count:1 });
+      }
     }
+    setProgress('main', end/total, `合併中… ${end.toLocaleString()} / ${total.toLocaleString()}`);
+    await tick();
   }
+
   const mergedArr = Array.from(merged.values());
   const mergedTotal = mergedArr.reduce((s,g)=>s+g.amount, 0);
-
   state.main.merged = mergedArr;
 
   // 摘要
-  $('#srcRows').textContent = state.main.rows.length.toLocaleString();
+  $('#srcRows').textContent = total.toLocaleString();
   $('#mergedRows').textContent = mergedArr.length.toLocaleString();
-  $('#dedupedCount').textContent = (state.main.rows.length - mergedArr.length).toLocaleString();
+  $('#dedupedCount').textContent = (total - mergedArr.length).toLocaleString();
   $('#srcTotal').textContent = fmt(Math.round(srcTotal));
   $('#mergedTotal').textContent = fmt(Math.round(mergedTotal));
   const consistent = Math.abs(srcTotal - mergedTotal) < 0.5;
   $('#reconBadge').className = 'badge ' + (consistent?'ok':'bad');
   $('#reconBadge').textContent = consistent ? '總額一致 ✓' : '總額不一致 ✗';
   $('#resultMain').classList.remove('hidden');
+
+  setProgress('main', 1, `合併完成 ✓ ${mergedArr.length.toLocaleString()} 筆`);
+  await tick();
+  setTimeout(()=>setProgress('main', null), 1000);
 
   // 自動跑後續比對 & 預覽
   runAdjustments();
@@ -252,12 +300,17 @@ function previewMerge(){
 
 // 3) 貨故請賠
 async function loadHuogu(file){
-  $('#hintHuogu').textContent = '讀取中…';
+  $('#hintHuogu').textContent = '處理中…';
+  setProgress('huogu', 0.1, '讀取檔案中…');
+  await tick();
   try{
     const wb = await readWorkbook(file);
-    // 預設讀第一個分頁
+    setProgress('huogu', 0.5, '解析 Excel 內容…');
+    await tick();
     const ws = wb.Sheets[wb.SheetNames[0]];
     const { headers, rows } = sheetToRows(ws);
+    setProgress('huogu', 0.85, '智慧判讀欄位中…');
+    await tick();
     state.huogu.headers = headers;
     state.huogu.rows = rows;
     state.huogu.mapping = detectColumns(headers, rows, [
@@ -272,9 +325,13 @@ async function loadHuogu(file){
     $('#dropHuogu').classList.add('is-loaded');
     $('#hintHuogu').textContent = `已讀取：${file.name} ｜ ${rows.length.toLocaleString()} 筆`;
     if (state.main.merged) { runAdjustments(); renderPreview(); }
+    setProgress('huogu', 1, '讀取完成 ✓');
+    await tick();
+    setTimeout(()=>setProgress('huogu', null), 900);
     toast('已讀取貨故請賠檔');
   }catch(err){
     console.error(err);
+    setProgress('huogu', null);
     $('#hintHuogu').textContent = '讀取失敗：' + (err.message || err);
     toast('讀取失敗', 'err');
   }
@@ -282,9 +339,13 @@ async function loadHuogu(file){
 
 // 4) 虛扣／重複收款（重複收款 Summary 分頁）
 async function loadXukou(file){
-  $('#hintXukou').textContent = '讀取中…';
+  $('#hintXukou').textContent = '處理中…';
+  setProgress('xukou', 0.1, '讀取檔案中…');
+  await tick();
   try{
     const wb = await readWorkbook(file);
+    setProgress('xukou', 0.55, '解析 Excel 內容…');
+    await tick();
     // 找「重複收款 Summary」分頁
     let summaryRows = null;
     for (const name of wb.SheetNames){
@@ -294,14 +355,20 @@ async function loadXukou(file){
         break;
       }
     }
+    setProgress('xukou', 0.9, '判讀分頁中…');
+    await tick();
     state.xukou.summary = summaryRows;
     $('#dropXukou').classList.add('is-loaded');
     const sheetCount = wb.SheetNames.length;
     $('#hintXukou').textContent = `已讀取：${file.name} ｜ ${sheetCount} 個分頁`;
     if (state.main.merged) { runAdjustments(); renderPreview(); }
+    setProgress('xukou', 1, '讀取完成 ✓');
+    await tick();
+    setTimeout(()=>setProgress('xukou', null), 900);
     toast('已讀取虛扣／重複收款檔');
   }catch(err){
     console.error(err);
+    setProgress('xukou', null);
     $('#hintXukou').textContent = '讀取失敗：' + (err.message || err);
     toast('讀取失敗', 'err');
   }

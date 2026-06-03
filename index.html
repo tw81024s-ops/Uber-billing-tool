@@ -46,6 +46,10 @@
         <div class="drop-title">將檔案拖到這裡，或<button class="link" type="button" data-pick="fileMain">點此選擇</button></div>
         <div class="drop-hint" id="hintMain">尚未選擇檔案</div>
       </div>
+      <div class="drop-progress hidden" id="prog_main">
+        <div class="bar"><div class="bar-fill"></div></div>
+        <div class="bar-label">處理中…</div>
+      </div>
     </div>
 
     <!-- 智慧判讀欄位區（動態出現） -->
@@ -92,6 +96,10 @@
         <div class="drop-title">將貨故請賠檔拖到這裡，或<button class="link" type="button" data-pick="fileHuogu">點此選擇</button></div>
         <div class="drop-hint" id="hintHuogu">未上傳（可略過）</div>
       </div>
+      <div class="drop-progress hidden" id="prog_huogu">
+        <div class="bar"><div class="bar-fill"></div></div>
+        <div class="bar-label">處理中…</div>
+      </div>
     </div>
     <div class="field-map hidden" id="mapHuogu">
       <h3 class="mini-h">智慧判讀欄位<span class="muted-inline">（已自動猜，可手動修正）</span></h3>
@@ -114,6 +122,10 @@
         <div class="drop-ico">🔁</div>
         <div class="drop-title">將虛扣／重複收款檔拖到這裡，或<button class="link" type="button" data-pick="fileXukou">點此選擇</button></div>
         <div class="drop-hint" id="hintXukou">未上傳（可略過）</div>
+      </div>
+      <div class="drop-progress hidden" id="prog_xukou">
+        <div class="bar"><div class="bar-fill"></div></div>
+        <div class="bar-label">處理中…</div>
       </div>
     </div>
   </section>
