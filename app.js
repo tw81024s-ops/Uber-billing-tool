@@ -216,10 +216,11 @@ async function loadMain(file){
       { key:'orderId', required:true },
       { key:'amount',  required:true },
     ]);
+    // 欄位改動時自動重新合併
     renderMapping($('#mapGridMain'), headers, [
       { key:'orderId', required:true },
       { key:'amount',  required:true },
-    ], state.main.mapping);
+    ], state.main.mapping, ()=>{ previewMerge(); });
     $('#mapMain').classList.remove('hidden');
     $('#dropMain').classList.add('is-loaded');
     $('#hintMain').textContent = `已讀取：${file.name} ｜ ${rows.length.toLocaleString()} 筆`;
@@ -227,6 +228,8 @@ async function loadMain(file){
     await tick();
     setTimeout(()=>setProgress('main', null), 900);
     toast('已讀取原始帳單');
+    // 自動跑合併（不用使用者按按鈕）
+    await previewMerge();
   }catch(err){
     console.error(err);
     setProgress('main', null);
@@ -294,7 +297,6 @@ async function previewMerge(){
   // 自動跑後續比對 & 預覽
   runAdjustments();
   renderPreview();
-  $('#btnExport').disabled = false;
   return true;
 }
 
