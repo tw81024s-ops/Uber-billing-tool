@@ -760,7 +760,7 @@ function exportExcel(){
   // 檔名
   const today = new Date();
   const ymd = `${today.getFullYear()}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
-  XLSX.writeFile(wb, `UBER帳單整理_${ymd}.xlsx`);
+  XLSX.writeFile(wb, `UBER帳單整理_${ymd}_v1.1.xlsx`);
   const parts = [`合併 ${state.main.merged.length.toLocaleString()} 筆`];
   if (state.adjustments.length) parts.push(`貨故 ${state.adjustments.length} 列`);
   if (matchCount > 0) parts.push(`虛扣對應 ${matchCount} 筆`);
