@@ -13,6 +13,7 @@ const state = {
   xukou:  { rows:null, headers:null, mapping:null, adjustments:null },                // 虛扣／重複收款（多分頁）
   adjustments: [],   // 右塊 [{order, amount, note}]
   manual: [],        // 待人工確認 [{order, ...}]
+  negSummary: [],    // B 欄負數單號對應狀態 [{order, mainAmount, status, ...}]
 };
 
 // ---- 工具 ----
@@ -499,14 +500,43 @@ function runAdjustments(){
   const xukouIds = (state.xukou.adjustments && state.xukou.adjustments.size)
     ? new Set(state.xukou.adjustments.keys()) : new Set();
   const huoguIds = new Set();
+  const huoguSumMap = new Map();   // 查貨號碼 -> 含稅加總
   if (state.huogu.rows && state.huogu.mapping && state.huogu.mapping.orderId.index >= 0){
     const c = state.huogu.mapping.orderId.index;
+    const ac = state.huogu.mapping.amountIncTax ? state.huogu.mapping.amountIncTax.index : -1;
     for (const r of state.huogu.rows){
-      if (r[c] != null && r[c] !== '') huoguIds.add(String(r[c]).trim());
+      if (r[c] != null && r[c] !== ''){
+        const k = String(r[c]).trim();
+        huoguIds.add(k);
+        if (ac >= 0) huoguSumMap.set(k, (huoguSumMap.get(k)||0) + (Number(r[ac])||0));
+      }
     }
   }
+  // 建立「B 欄負數單號對應表」：每個合併後為負的訂單，判斷它對應到什麼
+  state.negSummary = [];
   for (const g of state.main.merged){
-    if (g.amount < 0 && !xukouIds.has(g.orderId) && !huoguIds.has(g.orderId)){
+    if (g.amount >= 0) continue;
+    let status, srcOrder='', purpose='', detailAmount='';
+    if (xukouIds.has(g.orderId)){
+      const x = state.xukou.adjustments.get(g.orderId);
+      status = '虛扣調整';
+      srcOrder = x.srcOrder || '';
+      purpose = x.purpose || '';
+      detailAmount = x.amount != null ? x.amount : '';
+    } else if (huoguIds.has(g.orderId)){
+      status = '貨故請賠';
+      purpose = '貨故請賠';
+      detailAmount = huoguSumMap.has(g.orderId) ? -Math.round(huoguSumMap.get(g.orderId)) : '';
+    } else {
+      status = '需確認';
+      purpose = '需確認';
+    }
+    state.negSummary.push({
+      order: g.orderId, mainAmount: Math.round(g.amount),
+      status, srcOrder, purpose, detailAmount
+    });
+    // 對不到任何來源的負金額 → 進待人工確認
+    if (status === '需確認'){
       state.manual.push({
         order: g.orderId,
         mainAmount: g.amount,
@@ -662,18 +692,27 @@ function exportExcel(){
   }
   const wb = XLSX.utils.book_new();
   const xukouMap = state.xukou.adjustments || new Map();
+  // 負數單號對應表（orderId -> 對應狀態），用於同列標註
+  const negMap = new Map((state.negSummary||[]).map(n => [n.order, n]));
 
   // -- Final 分頁 --
-  // 左塊 A,B；空 C,D；右塊 E,F,G；空 H；虛扣對應 I,J,K
+  // 左塊 A,B；空 C,D；右塊 E,F,G；空 H；對應 I,J,K（原單號/調整目的(或貨故請賠/需確認)/金額）
   const aoa = [['列標籤','加總 - 帳單金額','','','單號','金額','備註','','原單號','調整目的','總調整金額']];
   const maxRows = Math.max(state.main.merged.length, state.adjustments.length);
   let matchCount = 0;
   for (let i=0; i<maxRows; i++){
     const left = state.main.merged[i];
     const right = state.adjustments[i];
-    // 左塊那筆訂單對應的虛扣資訊
+    // 左塊那筆訂單的對應資訊：B 欄負數一律標註（貨故/虛扣/需確認）
     let srcOrder='', purpose='', adjAmount='';
-    if (left && xukouMap.has(left.orderId)){
+    if (left && negMap.has(left.orderId)){
+      const n = negMap.get(left.orderId);
+      srcOrder = n.srcOrder || '';
+      purpose  = n.purpose  || '';
+      adjAmount = n.detailAmount != null ? n.detailAmount : '';
+      matchCount++;
+    } else if (left && xukouMap.has(left.orderId)){
+      // 正金額但有虛扣對應（如月異常明細）也帶出來
       const x = xukouMap.get(left.orderId);
       srcOrder = x.srcOrder || '';
       purpose  = x.purpose  || '';
@@ -741,6 +780,27 @@ function exportExcel(){
     XLSX.utils.book_append_sheet(wb, ws3, '虛扣對應');
   }
 
+  // -- 負數單號彙整 分頁（所有 B 欄負數的對應狀態） --
+  if (state.negSummary && state.negSummary.length){
+    const negAoa = [['商家訂單 ID','合併後金額','對應狀態','原單號','調整目的','對應金額']];
+    // 先排「需確認」，再貨故請賠，再虛扣調整（需確認排最前面，最該注意）
+    const order = { '需確認':0, '貨故請賠':1, '虛扣調整':2 };
+    const sorted = [...state.negSummary].sort((a,b)=>(order[a.status]??9)-(order[b.status]??9));
+    for (const n of sorted){
+      negAoa.push([n.order, n.mainAmount, n.status, n.srcOrder||'', n.purpose||'', n.detailAmount!==''?n.detailAmount:'']);
+    }
+    const wsN = XLSX.utils.aoa_to_sheet(negAoa);
+    wsN['!cols'] = [{wch:16},{wch:14},{wch:12},{wch:16},{wch:24},{wch:14}];
+    wsN['!autofilter'] = { ref: `A1:F${negAoa.length}` };
+    for (let r=2; r<=negAoa.length; r++){
+      ['A','D'].forEach(col => {
+        const c = wsN[col+r];
+        if (c && c.v !== '' && c.v != null) { c.t = 's'; c.v = String(c.v); }
+      });
+    }
+    XLSX.utils.book_append_sheet(wb, wsN, '負數單號彙整');
+  }
+
   // -- 待人工確認 分頁 --
   const manualAoa = [['單號','類型','主檔金額','請賠/應退','差額','說明']];
   for (const m of state.manual){
@@ -792,7 +852,7 @@ function bindDrop(dropId, inputId, handler){
 
 document.addEventListener('DOMContentLoaded', ()=>{
   // 版本標示：由 app.js 設定，可確認 app.js 是否為新版
-  const APP_VERSION = 'v1.1 · 06/03 ✓';
+  const APP_VERSION = 'v1.2 · 06/03 ✓';
   const verChip = document.getElementById('verChip');
   if (verChip) verChip.textContent = APP_VERSION;
   console.log('[UBER 帳單整理工具] app.js 版本：' + APP_VERSION + '（含負金額待查、虛扣對應分頁）');
