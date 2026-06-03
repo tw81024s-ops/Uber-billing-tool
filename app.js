@@ -791,6 +791,12 @@ function bindDrop(dropId, inputId, handler){
 }
 
 document.addEventListener('DOMContentLoaded', ()=>{
+  // 版本標示：由 app.js 設定，可確認 app.js 是否為新版
+  const APP_VERSION = 'v1.1 · 06/03 ✓';
+  const verChip = document.getElementById('verChip');
+  if (verChip) verChip.textContent = APP_VERSION;
+  console.log('[UBER 帳單整理工具] app.js 版本：' + APP_VERSION + '（含負金額待查、虛扣對應分頁）');
+
   // pickers
   $$('[data-pick]').forEach(btn => {
     btn.addEventListener('click', e => {
