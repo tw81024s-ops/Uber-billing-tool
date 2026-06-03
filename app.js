@@ -493,11 +493,61 @@ function runAdjustments(){
       });
     }
   }
+
+  // ---- 合併後負金額但未對到任何已知來源（貨故請賠檔／虛扣單號總整理）→ 標記為待查 ----
+  // user 需向 Uber 確認實際單號，再判斷是貨故或其他原因
+  const xukouIds = (state.xukou.adjustments && state.xukou.adjustments.size)
+    ? new Set(state.xukou.adjustments.keys()) : new Set();
+  const huoguIds = new Set();
+  if (state.huogu.rows && state.huogu.mapping && state.huogu.mapping.orderId.index >= 0){
+    const c = state.huogu.mapping.orderId.index;
+    for (const r of state.huogu.rows){
+      if (r[c] != null && r[c] !== '') huoguIds.add(String(r[c]).trim());
+    }
+  }
+  for (const g of state.main.merged){
+    if (g.amount < 0 && !xukouIds.has(g.orderId) && !huoguIds.has(g.orderId)){
+      state.manual.push({
+        order: g.orderId,
+        mainAmount: g.amount,
+        claim: null, diff: null,
+        type: '負金額待查',
+        note: '合併後為負金額，未對到貨故請賠或虛扣單號，需向 Uber 確認實際單號（可能是貨故或其他原因）'
+      });
+    }
+  }
 }
 
 // 6) 預覽渲染
 function renderPreview(){
   $('#previewBox').classList.remove('hidden');
+
+  // 處理結果摘要
+  const summary = $('#processSummary');
+  if (summary){
+    const chips = [];
+    if (state.main.merged){
+      chips.push(`<span class="sum-chip"><span>合併帳單</span><b>${state.main.merged.length.toLocaleString()}</b><span>筆</span></span>`);
+    }
+    if (state.adjustments.length){
+      chips.push(`<span class="sum-chip ok"><span>貨故調整</span><b>${state.adjustments.length}</b><span>列</span></span>`);
+    } else if (state.huogu.rows){
+      chips.push(`<span class="sum-chip empty"><span>貨故調整</span><b>0</b><span>列</span></span>`);
+    }
+    if (state.xukou.adjustments && state.xukou.adjustments.size){
+      const mainSet = state.main.merged ? new Set(state.main.merged.map(g=>g.orderId)) : new Set();
+      let matched = 0;
+      for (const k of state.xukou.adjustments.keys()) if (mainSet.has(k)) matched++;
+      const cls = matched > 0 ? 'ok' : 'warn';
+      chips.push(`<span class="sum-chip ${cls}"><span>虛扣對應</span><b>${matched}</b><span>/ ${state.xukou.adjustments.size} 筆已入帳</span></span>`);
+    } else if (state.xukou.summary){
+      chips.push(`<span class="sum-chip empty"><span>虛扣對應</span><b>0</b><span>筆</span></span>`);
+    }
+    if (state.manual.length){
+      chips.push(`<span class="sum-chip warn"><span>待人工確認</span><b>${state.manual.length}</b><span>筆</span></span>`);
+    }
+    summary.innerHTML = chips.join('');
+  }
 
   // 左塊
   const leftPane = $('#paneLeft');
@@ -656,6 +706,41 @@ function exportExcel(){
   }
   XLSX.utils.book_append_sheet(wb, ws, 'Final');
 
+  // -- 虛扣對應 分頁（獨立呈現所有虛扣單號的對應狀態） --
+  if (xukouMap.size){
+    const mainSet = new Map(state.main.merged.map(g => [g.orderId, g.amount]));
+    const xukouAoa = [['虛扣單號','原單號','調整目的','表內金額','主檔金額','入帳狀態']];
+    // 先排已入帳，再排未入帳
+    const matched = [], unmatched = [];
+    for (const [xid, info] of xukouMap.entries()){
+      const row = {
+        xukouId: xid,
+        srcOrder: info.srcOrder || '',
+        purpose: info.purpose || '',
+        amount: info.amount != null ? info.amount : '',
+        mainAmount: mainSet.has(xid) ? Math.round(mainSet.get(xid)) : null,
+      };
+      if (mainSet.has(xid)) matched.push(row);
+      else unmatched.push(row);
+    }
+    for (const r of matched){
+      xukouAoa.push([r.xukouId, r.srcOrder, r.purpose, r.amount, r.mainAmount, '已入帳']);
+    }
+    for (const r of unmatched){
+      xukouAoa.push([r.xukouId, r.srcOrder, r.purpose, r.amount, '未入帳', '未入帳']);
+    }
+    const ws3 = XLSX.utils.aoa_to_sheet(xukouAoa);
+    ws3['!cols'] = [{wch:16},{wch:16},{wch:26},{wch:14},{wch:14},{wch:12}];
+    for (let r=2; r<=xukouAoa.length; r++){
+      ['A','B'].forEach(col => {
+        const c = ws3[col+r];
+        if (c && c.v !== '' && c.v != null) { c.t = 's'; c.v = String(c.v); }
+      });
+    }
+    ws3['!autofilter'] = { ref: `A1:F${xukouAoa.length}` };
+    XLSX.utils.book_append_sheet(wb, ws3, '虛扣對應');
+  }
+
   // -- 待人工確認 分頁 --
   const manualAoa = [['單號','類型','主檔金額','請賠/應退','差額','說明']];
   for (const m of state.manual){
@@ -676,7 +761,11 @@ function exportExcel(){
   const today = new Date();
   const ymd = `${today.getFullYear()}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
   XLSX.writeFile(wb, `UBER帳單整理_${ymd}.xlsx`);
-  toast(matchCount > 0 ? `已下載 Excel ｜虛扣對應 ${matchCount} 筆` : '已下載 Excel');
+  const parts = [`合併 ${state.main.merged.length.toLocaleString()} 筆`];
+  if (state.adjustments.length) parts.push(`貨故 ${state.adjustments.length} 列`);
+  if (matchCount > 0) parts.push(`虛扣對應 ${matchCount} 筆`);
+  if (state.manual.length) parts.push(`待人工 ${state.manual.length} 筆`);
+  toast(`已下載 Excel ｜ ${parts.join('，')}`);
 }
 
 // =============================================================

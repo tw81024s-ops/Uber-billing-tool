@@ -280,6 +280,28 @@ body{
   overflow:hidden;
   background:#fff;
 }
+.preview-summary{
+  display:flex; flex-wrap:wrap; gap:8px;
+  padding:14px 16px;
+  background:linear-gradient(180deg, var(--pink-50), #fff);
+  border-bottom:1px solid var(--pink-100);
+  align-items:center;
+}
+.preview-summary:empty{ display:none }
+.sum-chip{
+  display:inline-flex; align-items:center; gap:6px;
+  padding:5px 12px; border-radius:999px;
+  background:#fff; border:1px solid var(--pink-100);
+  font-size:12.5px; color:var(--ink-700);
+}
+.sum-chip b{
+  color:var(--pink-600); font-weight:700;
+  font-variant-numeric:tabular-nums;
+  font-family:'Plus Jakarta Sans',sans-serif;
+}
+.sum-chip.empty b{ color:var(--ink-300) }
+.sum-chip.ok b{ color:var(--ok) }
+.sum-chip.warn b{ color:var(--warn) }
 .preview-tabs{
   display:flex;
   border-bottom:1px solid var(--pink-100);
