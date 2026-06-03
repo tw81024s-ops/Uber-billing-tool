@@ -113,7 +113,7 @@
       <span class="step-num">03</span>
       <div>
         <h2>上傳虛扣／重複收款檔（可選）</h2>
-        <p class="muted">將重複收款 Summary 的應退金額列入「待人工確認」由 user 自行拆分</p>
+        <p class="muted">解析「虛扣單號總整理」，在 Final 分頁 I~K 欄帶出原單號／調整目的／調整金額</p>
       </div>
     </div>
     <div class="drop" id="dropXukou">
@@ -144,11 +144,13 @@
       <div class="preview-tabs">
         <button class="tab active" data-tab="left">合併帳單（左塊）</button>
         <button class="tab" data-tab="right">調整明細（右塊）</button>
+        <button class="tab" data-tab="xukou">虛扣對應</button>
         <button class="tab" data-tab="manual">待人工確認</button>
       </div>
       <div class="preview-body">
         <div class="tab-pane active" id="paneLeft"></div>
         <div class="tab-pane" id="paneRight"></div>
+        <div class="tab-pane" id="paneXukou"></div>
         <div class="tab-pane" id="paneManual"></div>
       </div>
     </div>

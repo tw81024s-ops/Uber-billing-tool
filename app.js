@@ -10,7 +10,7 @@
 const state = {
   main:   { rows:null, headers:null, mapping:null, merged:null },  // 原始帳單
   huogu:  { rows:null, headers:null, mapping:null },                // 貨故請賠
-  xukou:  { rows:null, headers:null, mapping:null },                // 虛扣／重複收款（多分頁）
+  xukou:  { rows:null, headers:null, mapping:null, adjustments:null },                // 虛扣／重複收款（多分頁）
   adjustments: [],   // 右塊 [{order, amount, note}]
   manual: [],        // 待人工確認 [{order, ...}]
 };
@@ -357,6 +357,36 @@ async function loadXukou(file){
         break;
       }
     }
+    // 找「虛扣單號總整理」分頁 → 建立 虛扣單號 -> {原單號, 調整目的, 金額}
+    const xukouMap = new Map();
+    for (const name of wb.SheetNames){
+      if (name.includes('虛扣單號總整理')){
+        const arr = XLSX.utils.sheet_to_json(wb.Sheets[name], {header:1, defval:null, raw:true, blankrows:false});
+        let lastPurpose = null, lastSrcOrder = null;
+        for (let i=1; i<arr.length; i++){
+          const r = arr[i];
+          if (!r || r[1]==null || r[1]==='') continue;
+          const srcOrder = r[0];
+          const xukouId = String(r[1]).trim();
+          let purpose = r[2];
+          const amount = r[3];
+          // 續行：本列沒有調整目的時，繼承上一筆（例如「重複收款單號調整」一組多筆）
+          if (!purpose && lastPurpose){
+            purpose = lastPurpose;
+          } else if (purpose){
+            lastPurpose = purpose;
+            lastSrcOrder = srcOrder;
+          }
+          xukouMap.set(xukouId, {
+            srcOrder: srcOrder != null && srcOrder !== '' ? String(srcOrder).trim() : null,
+            purpose: purpose || null,
+            amount: amount != null && amount !== '' ? Number(amount) : null
+          });
+        }
+        break;
+      }
+    }
+    state.xukou.adjustments = xukouMap;
     setProgress('xukou', 0.9, '判讀分頁中…');
     await tick();
     state.xukou.summary = summaryRows;
@@ -533,6 +563,45 @@ function renderPreview(){
   } else {
     manualPane.innerHTML = '<div class="empty">沒有待人工確認的項目</div>';
   }
+
+  // 虛扣對應：把主檔合併後的單號 跟 虛扣單號總整理 對照
+  const xukouPane = $('#paneXukou');
+  const xukouMap = state.xukou.adjustments;
+  if (xukouMap && xukouMap.size && state.main.merged){
+    const mainSet = new Map(state.main.merged.map(g => [g.orderId, g.amount]));
+    const matched = [], unmatched = [];
+    for (const [xid, info] of xukouMap.entries()){
+      if (mainSet.has(xid)){
+        matched.push({ xukouId:xid, mainAmount:Math.round(mainSet.get(xid)), ...info });
+      } else {
+        unmatched.push({ xukouId:xid, ...info });
+      }
+    }
+    const renderRow = m => `
+      <tr>
+        <td>${m.xukouId}</td>
+        <td>${m.srcOrder||'—'}</td>
+        <td>${m.purpose||'—'}</td>
+        <td class="num ${m.amount<0?'neg':''}">${m.amount==null?'—':fmt(m.amount)}</td>
+        <td class="num ${m.mainAmount!=null && m.mainAmount<0?'neg':''}">${m.mainAmount==null?'未入帳':fmt(m.mainAmount)}</td>
+      </tr>`;
+    xukouPane.innerHTML = `
+      <div style="padding:10px 14px; background:var(--pink-50); font-size:12.5px; color:var(--ink-700); border-bottom:1px solid var(--pink-100);">
+        虛扣單號總整理 ${xukouMap.size} 筆 ｜ 已入帳 <b style="color:var(--ok)">${matched.length}</b> 筆 ｜ 未入帳 <b style="color:var(--warn)">${unmatched.length}</b> 筆
+      </div>
+      <table>
+        <thead><tr><th>虛扣單號</th><th>原單號</th><th>調整目的</th><th>表內金額</th><th>主檔金額</th></tr></thead>
+        <tbody>
+          ${matched.map(renderRow).join('')}
+          ${unmatched.map(renderRow).join('')}
+        </tbody>
+      </table>
+    `;
+  } else if (xukouMap && xukouMap.size){
+    xukouPane.innerHTML = '<div class="empty">請先上傳原始帳單以進行對應</div>';
+  } else {
+    xukouPane.innerHTML = '<div class="empty">未上傳虛扣／重複收款檔（可略過）</div>';
+  }
 }
 
 // 7) 匯出 Excel
@@ -542,14 +611,25 @@ function exportExcel(){
     return;
   }
   const wb = XLSX.utils.book_new();
+  const xukouMap = state.xukou.adjustments || new Map();
 
   // -- Final 分頁 --
-  // 左塊 A,B；空 C,D；右塊 E,F,G
-  const aoa = [['列標籤','加總 - 帳單金額','','','單號','金額','備註']];
+  // 左塊 A,B；空 C,D；右塊 E,F,G；空 H；虛扣對應 I,J,K
+  const aoa = [['列標籤','加總 - 帳單金額','','','單號','金額','備註','','原單號','調整目的','總調整金額']];
   const maxRows = Math.max(state.main.merged.length, state.adjustments.length);
+  let matchCount = 0;
   for (let i=0; i<maxRows; i++){
     const left = state.main.merged[i];
     const right = state.adjustments[i];
+    // 左塊那筆訂單對應的虛扣資訊
+    let srcOrder='', purpose='', adjAmount='';
+    if (left && xukouMap.has(left.orderId)){
+      const x = xukouMap.get(left.orderId);
+      srcOrder = x.srcOrder || '';
+      purpose  = x.purpose  || '';
+      adjAmount = x.amount != null ? x.amount : '';
+      matchCount++;
+    }
     aoa.push([
       left ? left.orderId : '',
       left ? Math.round(left.amount) : '',
@@ -557,19 +637,22 @@ function exportExcel(){
       right ? right.order : '',
       right ? right.amount : '',
       right ? right.note : '',
+      '',
+      srcOrder, purpose, adjAmount,
     ]);
   }
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws['!cols'] = [
     {wch:16}, {wch:16}, {wch:3}, {wch:3},
-    {wch:16}, {wch:12}, {wch:28},
+    {wch:16}, {wch:12}, {wch:28}, {wch:3},
+    {wch:16}, {wch:24}, {wch:14},
   ];
-  // 商家訂單 ID 設文字格式（避免變科學記號）
+  // 商家訂單 ID / 單號 / 原單號 設文字格式（避免變科學記號）
   for (let r=2; r<=aoa.length; r++){
-    const cellA = ws['A'+r];
-    if (cellA && cellA.v !== '') { cellA.t = 's'; cellA.v = String(cellA.v); }
-    const cellE = ws['E'+r];
-    if (cellE && cellE.v !== '') { cellE.t = 's'; cellE.v = String(cellE.v); }
+    ['A','E','I'].forEach(col => {
+      const cell = ws[col+r];
+      if (cell && cell.v !== '' && cell.v != null) { cell.t = 's'; cell.v = String(cell.v); }
+    });
   }
   XLSX.utils.book_append_sheet(wb, ws, 'Final');
 
@@ -593,7 +676,7 @@ function exportExcel(){
   const today = new Date();
   const ymd = `${today.getFullYear()}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
   XLSX.writeFile(wb, `UBER帳單整理_${ymd}.xlsx`);
-  toast('已下載 Excel 檔');
+  toast(matchCount > 0 ? `已下載 Excel ｜虛扣對應 ${matchCount} 筆` : '已下載 Excel');
 }
 
 // =============================================================
@@ -644,7 +727,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
       $$('.tab').forEach(x => x.classList.remove('active'));
       $$('.tab-pane').forEach(x => x.classList.remove('active'));
       t.classList.add('active');
-      const map = {left:'paneLeft', right:'paneRight', manual:'paneManual'};
+      const map = {left:'paneLeft', right:'paneRight', xukou:'paneXukou', manual:'paneManual'};
       $('#'+map[t.dataset.tab]).classList.add('active');
     });
   });
