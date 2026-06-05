@@ -716,7 +716,7 @@ function exportExcel(){
 
   // -- Final 分頁 --
   // 左塊 A,B；空 C,D；右塊 E,F,G；空 H；對應 I,J,K（原單號/調整目的(或貨故請賠/需確認)/金額）
-  const aoa = [['列標籤','加總 - 帳單金額','','','單號','金額','備註','','原單號','調整目的','總調整金額']];
+  const aoa = [['列標籤','加總 - 帳單金額','','','單號','金額','備註','','原單號','調整目的','總調整金額','主檔合併筆數','重複收款次數']];
   const maxRows = Math.max(state.main.merged.length, state.adjustments.length);
   let matchCount = 0;
   for (let i=0; i<maxRows; i++){
@@ -724,7 +724,6 @@ function exportExcel(){
     const right = state.adjustments[i];
     // 左塊那筆訂單的對應資訊：B 欄負數一律標註（貨故/虛扣/需確認）
     let srcOrder='', purpose='', adjAmount='';
-    let dupNote = '';   // 重複收款備註，放 G 欄（該列右塊為空時）
     if (left && negMap.has(left.orderId)){
       const n = negMap.get(left.orderId);
       srcOrder = n.srcOrder || '';
@@ -732,9 +731,8 @@ function exportExcel(){
       adjAmount = n.detailAmount != null ? n.detailAmount : '';
       matchCount++;
     } else if (left && dupMap.has(left.orderId)){
-      // 重複收款（正金額）：B 欄不變、G 欄標重複次數、K 欄填應退金額
+      // 重複收款（正金額）：B 欄不變、K 欄填應退金額；次數放獨立 M 欄
       const d = dupMap.get(left.orderId);
-      dupNote   = `重複收款 ${d.times} 次`;   // 放 G 欄（備註）
       adjAmount = d.refund;                    // K 欄應退金額（單次運費 ×（次數-1））
       matchCount++;
     } else if (left && xukouMap.has(left.orderId)){
@@ -745,15 +743,19 @@ function exportExcel(){
       adjAmount = x.amount != null ? x.amount : '';
       matchCount++;
     }
+    // 兩種「重複次數」各自獨立欄位（皆對齊左塊單號，不互相干擾、不碰右塊 G 欄）
+    const mergeCount = (left && left.count > 1) ? left.count : '';                       // L 欄：主檔合併筆數
+    const dupTimes   = (left && dupMap.has(left.orderId)) ? dupMap.get(left.orderId).times : ''; // M 欄：重複收款次數
     aoa.push([
       left ? left.orderId : '',
       left ? Math.round(left.amount) : '',
       '', '',
       right ? right.order : '',
       right ? right.amount : '',
-      right ? right.note : dupNote,   // G 欄：右塊備註優先，否則放重複收款備註
+      right ? right.note : '',        // G 欄：純右塊貨故備註
       '',
       srcOrder, purpose, adjAmount,
+      mergeCount, dupTimes,           // L, M 欄
     ]);
   }
   const ws = XLSX.utils.aoa_to_sheet(aoa);
@@ -761,6 +763,7 @@ function exportExcel(){
     {wch:16}, {wch:16}, {wch:3}, {wch:3},
     {wch:16}, {wch:12}, {wch:28}, {wch:3},
     {wch:16}, {wch:24}, {wch:14},
+    {wch:14}, {wch:14},
   ];
   // 商家訂單 ID / 單號 / 原單號 設文字格式（避免變科學記號）
   for (let r=2; r<=aoa.length; r++){
