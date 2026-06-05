@@ -10,7 +10,7 @@
 const state = {
   main:   { rows:null, headers:null, mapping:null, merged:null },  // 原始帳單
   huogu:  { rows:null, headers:null, mapping:null },                // 貨故請賠
-  xukou:  { rows:null, headers:null, mapping:null, adjustments:null },                // 虛扣／重複收款（多分頁）
+  xukou:  { rows:null, headers:null, mapping:null, adjustments:null, dupMap:null },                // 虛扣／重複收款（多分頁）
   adjustments: [],   // 右塊 [{order, amount, note}]
   manual: [],        // 待人工確認 [{order, ...}]
   negSummary: [],    // B 欄負數單號對應狀態 [{order, mainAmount, status, ...}]
@@ -388,6 +388,24 @@ async function loadXukou(file){
       }
     }
     state.xukou.adjustments = xukouMap;
+    // 找「重複收款 - N 張重複宅單」分頁 → 建立 單號 -> {times 收款次數, refund 應退金額}
+    // 表頭：external_order_id / delivery_fee(=應退金額) / duplicated_check(=收款次數)
+    const dupMap = new Map();
+    for (const name of wb.SheetNames){
+      const m = name.replace(/\s+/g,'').match(/重複收款[-－](\d+)張重複宅單/);
+      if (!m) continue;
+      const arr = XLSX.utils.sheet_to_json(wb.Sheets[name], {header:1, defval:null, raw:true, blankrows:false});
+      for (let i=1; i<arr.length; i++){
+        const r = arr[i];
+        if (!r || r[0]==null || r[0]==='') continue;
+        const id = String(r[0]).trim();
+        if (!/^\d{6,}$/.test(id)) continue;            // 僅收訂單號
+        const refund = Number(r[1]) || 0;               // delivery_fee 欄 = 應退金額
+        const times  = Number(r[2]) || parseInt(m[1],10); // duplicated_check = 收款次數
+        dupMap.set(id, { times, refund });
+      }
+    }
+    state.xukou.dupMap = dupMap;
     setProgress('xukou', 0.9, '判讀分頁中…');
     await tick();
     state.xukou.summary = summaryRows;
@@ -692,6 +710,7 @@ function exportExcel(){
   }
   const wb = XLSX.utils.book_new();
   const xukouMap = state.xukou.adjustments || new Map();
+  const dupMap = state.xukou.dupMap || new Map();   // 重複收款：單號 -> {times, refund}
   // 負數單號對應表（orderId -> 對應狀態），用於同列標註
   const negMap = new Map((state.negSummary||[]).map(n => [n.order, n]));
 
@@ -705,11 +724,18 @@ function exportExcel(){
     const right = state.adjustments[i];
     // 左塊那筆訂單的對應資訊：B 欄負數一律標註（貨故/虛扣/需確認）
     let srcOrder='', purpose='', adjAmount='';
+    let dupNote = '';   // 重複收款備註，放 G 欄（該列右塊為空時）
     if (left && negMap.has(left.orderId)){
       const n = negMap.get(left.orderId);
       srcOrder = n.srcOrder || '';
       purpose  = n.purpose  || '';
       adjAmount = n.detailAmount != null ? n.detailAmount : '';
+      matchCount++;
+    } else if (left && dupMap.has(left.orderId)){
+      // 重複收款（正金額）：B 欄不變、G 欄標重複次數、K 欄填應退金額
+      const d = dupMap.get(left.orderId);
+      dupNote   = `重複收款 ${d.times} 次`;   // 放 G 欄（備註）
+      adjAmount = d.refund;                    // K 欄應退金額（單次運費 ×（次數-1））
       matchCount++;
     } else if (left && xukouMap.has(left.orderId)){
       // 正金額但有虛扣對應（如月異常明細）也帶出來
@@ -725,7 +751,7 @@ function exportExcel(){
       '', '',
       right ? right.order : '',
       right ? right.amount : '',
-      right ? right.note : '',
+      right ? right.note : dupNote,   // G 欄：右塊備註優先，否則放重複收款備註
       '',
       srcOrder, purpose, adjAmount,
     ]);
@@ -820,7 +846,7 @@ function exportExcel(){
   // 檔名
   const today = new Date();
   const ymd = `${today.getFullYear()}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
-  XLSX.writeFile(wb, `UBER帳單整理_${ymd}_v1.2.xlsx`);
+  XLSX.writeFile(wb, `UBER帳單整理_${ymd}_v1.3.xlsx`);
   const parts = [`合併 ${state.main.merged.length.toLocaleString()} 筆`];
   if (state.adjustments.length) parts.push(`貨故 ${state.adjustments.length} 列`);
   if (matchCount > 0) parts.push(`虛扣對應 ${matchCount} 筆`);
@@ -852,7 +878,7 @@ function bindDrop(dropId, inputId, handler){
 
 document.addEventListener('DOMContentLoaded', ()=>{
   // 版本標示：由 app.js 設定，可確認 app.js 是否為新版
-  const APP_VERSION = 'v1.2 · 06/05 ✓';
+  const APP_VERSION = 'v1.3 · 06/05 ✓';
   const verChip = document.getElementById('verChip');
   if (verChip) verChip.textContent = APP_VERSION;
   console.log('[UBER 帳單整理工具] app.js 版本：' + APP_VERSION + '（含負金額待查、虛扣對應分頁）');
