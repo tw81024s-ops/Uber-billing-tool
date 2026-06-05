@@ -715,59 +715,74 @@ function exportExcel(){
   const negMap = new Map((state.negSummary||[]).map(n => [n.order, n]));
 
   // -- Final 分頁 --
-  // 左塊 A,B；空 C,D；右塊 E,F,G；空 H；對應 I,J,K（原單號/調整目的(或貨故請賠/需確認)/金額）
-  const aoa = [['列標籤','加總 - 帳單金額','','','單號','金額','備註','','原單號','調整目的','總調整金額','主檔合併筆數','重複收款次數']];
-  const maxRows = Math.max(state.main.merged.length, state.adjustments.length);
+  // 6 欄統一列表（理想版）：單號｜原單號｜金額｜備註｜總調整金額｜重複收款次數；貨故可打平者拆成請賠＋回溯兩列
+  const aoa = [['單號','原單號','金額','備註','總調整金額','重複收款次數']];
+  // 從調整明細建立 單號 -> {claim 請賠金額, traceback 回溯金額} 對照
+  const huoguDetail = new Map();
+  for (const a of (state.adjustments || [])){
+    if (!huoguDetail.has(a.order)) huoguDetail.set(a.order, {});
+    const h = huoguDetail.get(a.order);
+    if (a.note === '貨故請賠') h.claim = a.amount;              // 負數
+    else if (a.note === '貨故運費回溯') h.traceback = a.amount; // 負數
+  }
   let matchCount = 0;
-  for (let i=0; i<maxRows; i++){
-    const left = state.main.merged[i];
-    const right = state.adjustments[i];
-    // 左塊那筆訂單的對應資訊：B 欄負數一律標註（貨故/虛扣/需確認）
-    let srcOrder='', purpose='', adjAmount='';
-    if (left && negMap.has(left.orderId)){
-      const n = negMap.get(left.orderId);
-      srcOrder = n.srcOrder || '';
-      purpose  = n.purpose  || '';
-      adjAmount = n.detailAmount != null ? n.detailAmount : '';
+  for (const g of state.main.merged){
+    const id = g.orderId;
+    const mainAmt = Math.round(g.amount);
+    const dup = dupMap.get(id);
+    const dupTimes = dup ? dup.times : '';
+    const hd = huoguDetail.get(id);
+    if (hd && hd.claim != null){
       matchCount++;
-    } else if (left && dupMap.has(left.orderId)){
-      // 重複收款（正金額）：B 欄不變、K 欄填應退金額；次數放獨立 M 欄
-      const d = dupMap.get(left.orderId);
-      adjAmount = d.refund;                    // K 欄應退金額（單次運費 ×（次數-1））
-      matchCount++;
-    } else if (left && xukouMap.has(left.orderId)){
-      // 正金額但有虛扣對應（如月異常明細）也帶出來
-      const x = xukouMap.get(left.orderId);
-      srcOrder = x.srcOrder || '';
-      purpose  = x.purpose  || '';
-      adjAmount = x.amount != null ? x.amount : '';
-      matchCount++;
+      // 請賠＋回溯＝主檔金額（完全打平）→ 拆成兩列調整明細，總額不變
+      if (hd.traceback != null && hd.claim + hd.traceback === mainAmt){
+        aoa.push([id, '', hd.claim, '貨故請賠', '', dupTimes]);
+        aoa.push([id, '', hd.traceback, '貨故運費回溯', '', '']);
+        continue;
+      }
+      // 請賠＝主檔金額（差額 0）→ 一列請賠
+      if (hd.traceback == null && hd.claim === mainAmt){
+        aoa.push([id, '', mainAmt, '貨故請賠', '', dupTimes]);
+        continue;
+      }
+      // 拆不平 → 維持主檔金額一列，總調整金額欄放請賠參考值
+      aoa.push([id, '', mainAmt, '貨故請賠', hd.claim, dupTimes]);
+      continue;
     }
-    // 兩種「重複次數」各自獨立欄位（皆對齊左塊單號，不互相干擾、不碰右塊 G 欄）
-    const mergeCount = (left && left.count > 1) ? left.count : '';                       // L 欄：主檔合併筆數
-    const dupTimes   = (left && dupMap.has(left.orderId)) ? dupMap.get(left.orderId).times : ''; // M 欄：重複收款次數
-    aoa.push([
-      left ? left.orderId : '',
-      left ? Math.round(left.amount) : '',
-      '', '',
-      right ? right.order : '',
-      right ? right.amount : '',
-      right ? right.note : '',        // G 欄：純右塊貨故備註
-      '',
-      srcOrder, purpose, adjAmount,
-      mergeCount, dupTimes,           // L, M 欄
-    ]);
+    if (negMap.has(id)){
+      const n = negMap.get(id);
+      matchCount++;
+      if (n.status === '虛扣調整'){
+        aoa.push([id, n.srcOrder || '', mainAmt, n.purpose || '', (n.detailAmount !== '' && n.detailAmount != null) ? n.detailAmount : '', dupTimes]);
+        continue;
+      }
+      if (n.status === '需確認'){
+        aoa.push([id, '', mainAmt, '需確認', '', dupTimes]);
+        continue;
+      }
+    }
+    if (dup){
+      // 重複收款（正金額）：金額不變、總調整＝應退金額、次數欄標重複收款次數
+      matchCount++;
+      aoa.push([id, '', mainAmt, '', dup.refund, dup.times]);
+      continue;
+    }
+    if (xukouMap.has(id)){
+      // 正金額但有虛扣對應（如月異常明細）
+      const x = xukouMap.get(id);
+      matchCount++;
+      aoa.push([id, x.srcOrder || '', mainAmt, x.purpose || '', x.amount != null ? x.amount : '', '']);
+      continue;
+    }
+    aoa.push([id, '', mainAmt, '', '', '']);
   }
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws['!cols'] = [
-    {wch:16}, {wch:16}, {wch:3}, {wch:3},
-    {wch:16}, {wch:12}, {wch:28}, {wch:3},
-    {wch:16}, {wch:24}, {wch:14},
-    {wch:14}, {wch:14},
+    {wch:16}, {wch:16}, {wch:12}, {wch:26}, {wch:14}, {wch:14},
   ];
-  // 商家訂單 ID / 單號 / 原單號 設文字格式（避免變科學記號）
+  // 單號 / 原單號 設文字格式（避免變科學記號）
   for (let r=2; r<=aoa.length; r++){
-    ['A','E','I'].forEach(col => {
+    ['A','B'].forEach(col => {
       const cell = ws[col+r];
       if (cell && cell.v !== '' && cell.v != null) { cell.t = 's'; cell.v = String(cell.v); }
     });
@@ -849,7 +864,7 @@ function exportExcel(){
   // 檔名
   const today = new Date();
   const ymd = `${today.getFullYear()}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
-  XLSX.writeFile(wb, `UBER帳單整理_${ymd}_v1.3.xlsx`);
+  XLSX.writeFile(wb, `UBER帳單整理_${ymd}_v1.4.xlsx`);
   const parts = [`合併 ${state.main.merged.length.toLocaleString()} 筆`];
   if (state.adjustments.length) parts.push(`貨故 ${state.adjustments.length} 列`);
   if (matchCount > 0) parts.push(`虛扣對應 ${matchCount} 筆`);
@@ -881,7 +896,7 @@ function bindDrop(dropId, inputId, handler){
 
 document.addEventListener('DOMContentLoaded', ()=>{
   // 版本標示：由 app.js 設定，可確認 app.js 是否為新版
-  const APP_VERSION = 'v1.3 · 06/05 ✓';
+  const APP_VERSION = 'v1.4 · 06/05 ✓';
   const verChip = document.getElementById('verChip');
   if (verChip) verChip.textContent = APP_VERSION;
   console.log('[UBER 帳單整理工具] app.js 版本：' + APP_VERSION + '（含負金額待查、虛扣對應分頁）');
