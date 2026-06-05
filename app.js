@@ -820,7 +820,7 @@ function exportExcel(){
   // 檔名
   const today = new Date();
   const ymd = `${today.getFullYear()}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
-  XLSX.writeFile(wb, `UBER帳單整理_${ymd}_v1.1.xlsx`);
+  XLSX.writeFile(wb, `UBER帳單整理_${ymd}_v1.2.xlsx`);
   const parts = [`合併 ${state.main.merged.length.toLocaleString()} 筆`];
   if (state.adjustments.length) parts.push(`貨故 ${state.adjustments.length} 列`);
   if (matchCount > 0) parts.push(`虛扣對應 ${matchCount} 筆`);
@@ -852,7 +852,7 @@ function bindDrop(dropId, inputId, handler){
 
 document.addEventListener('DOMContentLoaded', ()=>{
   // 版本標示：由 app.js 設定，可確認 app.js 是否為新版
-  const APP_VERSION = 'v1.2 · 06/03 ✓';
+  const APP_VERSION = 'v1.2 · 06/05 ✓';
   const verChip = document.getElementById('verChip');
   if (verChip) verChip.textContent = APP_VERSION;
   console.log('[UBER 帳單整理工具] app.js 版本：' + APP_VERSION + '（含負金額待查、虛扣對應分頁）');
