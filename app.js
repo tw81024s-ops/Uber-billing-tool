@@ -714,71 +714,56 @@ function exportExcel(){
   // 負數單號對應表（orderId -> 對應狀態），用於同列標註
   const negMap = new Map((state.negSummary||[]).map(n => [n.order, n]));
 
-  // -- Final 分頁 --
-  // 6 欄統一列表（理想版）：單號｜原單號｜金額｜備註｜總調整金額｜重複收款次數；貨故可打平者拆成請賠＋回溯兩列
-  const aoa = [['單號','原單號','金額','備註','總調整金額','重複收款次數']];
-  // 從調整明細建立 單號 -> {claim 請賠金額, traceback 回溯金額} 對照
-  const huoguDetail = new Map();
+  // -- Final 分頁（9 欄）--
+  // 單號｜原單號｜原帳單合併金額｜備註｜已通知調整金額｜重複收款次數｜待人工修改｜修改後實際金額｜貨故請賠
+  const aoa = [['單號','原單號','原帳單合併金額','備註','已通知調整金額','重複收款次數','待人工修改','修改後實際金額','貨故請賠']];
+  // 貨故請賠含稅對照（單號 -> 請賠含稅金額，正數）
+  const huoguClaim = new Map();
   for (const a of (state.adjustments || [])){
-    if (!huoguDetail.has(a.order)) huoguDetail.set(a.order, {});
-    const h = huoguDetail.get(a.order);
-    if (a.note === '貨故請賠') h.claim = a.amount;              // 負數
-    else if (a.note === '貨故運費回溯') h.traceback = a.amount; // 負數
+    if (a.note === '貨故請賠') huoguClaim.set(a.order, Math.round(-a.amount)); // a.amount 為負，轉正
   }
+  // 待人工確認單號集合（G 欄標記用）
+  const manualSet = new Set((state.manual || []).flatMap(m => String(m.order || '').split('/').map(s => s.trim())));
   let matchCount = 0;
   for (const g of state.main.merged){
     const id = g.orderId;
-    const mainAmt = Math.round(g.amount);
+    const C = Math.round(g.amount);
     const dup = dupMap.get(id);
-    const dupTimes = dup ? dup.times : '';
-    const hd = huoguDetail.get(id);
-    if (hd && hd.claim != null){
+    const neg = negMap.get(id);
+    let B='', D='', E='', F='', G='', I='';
+    if (huoguClaim.has(id)){
+      // 貨故請賠：E＝-請賠含稅，I 欄標記
+      E = -huoguClaim.get(id);
+      I = '貨故請賠';
       matchCount++;
-      // 請賠＋回溯＝主檔金額（完全打平）→ 拆成兩列調整明細，總額不變
-      if (hd.traceback != null && hd.claim + hd.traceback === mainAmt){
-        aoa.push([id, '', hd.claim, '貨故請賠', '', dupTimes]);
-        aoa.push([id, '', hd.traceback, '貨故運費回溯', '', '']);
-        continue;
-      }
-      // 請賠＝主檔金額（差額 0）→ 一列請賠
-      if (hd.traceback == null && hd.claim === mainAmt){
-        aoa.push([id, '', mainAmt, '貨故請賠', '', dupTimes]);
-        continue;
-      }
-      // 拆不平 → 維持主檔金額一列，總調整金額欄放請賠參考值
-      aoa.push([id, '', mainAmt, '貨故請賠', hd.claim, dupTimes]);
-      continue;
-    }
-    if (negMap.has(id)){
-      const n = negMap.get(id);
+    } else if (neg && neg.status === '虛扣調整'){
+      B = neg.srcOrder || '';
+      D = neg.purpose || '';
+      E = (neg.detailAmount !== '' && neg.detailAmount != null) ? neg.detailAmount : '';
       matchCount++;
-      if (n.status === '虛扣調整'){
-        aoa.push([id, n.srcOrder || '', mainAmt, n.purpose || '', (n.detailAmount !== '' && n.detailAmount != null) ? n.detailAmount : '', dupTimes]);
-        continue;
-      }
-      if (n.status === '需確認'){
-        aoa.push([id, '', mainAmt, '需確認', '', dupTimes]);
-        continue;
-      }
-    }
-    if (dup){
-      // 重複收款（正金額）：金額不變、總調整＝應退金額、次數欄標重複收款次數
+    } else if (dup){
+      // 重複收款：E＝多收金額（正）
+      E = dup.refund;
       matchCount++;
-      aoa.push([id, '', mainAmt, '', dup.refund, dup.times]);
-      continue;
-    }
-    if (xukouMap.has(id)){
-      // 正金額但有虛扣對應（如月異常明細）
+    } else if (xukouMap.has(id)){
+      // 正金額虛扣對應（如月異常明細）
       const x = xukouMap.get(id);
+      B = x.srcOrder || '';
+      D = x.purpose || '';
+      E = x.amount != null ? x.amount : '';
       matchCount++;
-      aoa.push([id, x.srcOrder || '', mainAmt, x.purpose || '', x.amount != null ? x.amount : '', '']);
-      continue;
+    } else if (neg && neg.status === '需確認'){
+      D = '需確認';
     }
-    aoa.push([id, '', mainAmt, '', '', '']);
+    if (dup) F = dup.times;                 // 重複收款次數（混合情況也標）
+    if (manualSet.has(id)) G = '待人工修改'; // 待人工標記（樞紐用）
+    const Eval = (E === '' || E == null) ? 0 : E;
+    const H = Math.abs(C - Eval);            // 修改後實際金額＝|C-E|，不要負數
+    aoa.push([id, B, C, D, E, F, G, H, I]);
   }
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws['!cols'] = [
-    {wch:16}, {wch:16}, {wch:12}, {wch:26}, {wch:14}, {wch:14},
+    {wch:16}, {wch:16}, {wch:16}, {wch:22}, {wch:16}, {wch:12}, {wch:12}, {wch:16}, {wch:12},
   ];
   // 單號 / 原單號 設文字格式（避免變科學記號）
   for (let r=2; r<=aoa.length; r++){
@@ -787,6 +772,7 @@ function exportExcel(){
       if (cell && cell.v !== '' && cell.v != null) { cell.t = 's'; cell.v = String(cell.v); }
     });
   }
+  ws['!autofilter'] = { ref:`A1:I${aoa.length}` };  // 開篩選，方便樞紐/篩 G、I 欄
   XLSX.utils.book_append_sheet(wb, ws, 'Final');
 
   // -- 虛扣對應 分頁（獨立呈現所有虛扣單號的對應狀態） --
@@ -864,7 +850,7 @@ function exportExcel(){
   // 檔名
   const today = new Date();
   const ymd = `${today.getFullYear()}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
-  XLSX.writeFile(wb, `UBER帳單整理_${ymd}_v1.4.xlsx`);
+  XLSX.writeFile(wb, `UBER帳單整理_${ymd}_v1.5.xlsx`);
   const parts = [`合併 ${state.main.merged.length.toLocaleString()} 筆`];
   if (state.adjustments.length) parts.push(`貨故 ${state.adjustments.length} 列`);
   if (matchCount > 0) parts.push(`虛扣對應 ${matchCount} 筆`);
@@ -896,7 +882,7 @@ function bindDrop(dropId, inputId, handler){
 
 document.addEventListener('DOMContentLoaded', ()=>{
   // 版本標示：由 app.js 設定，可確認 app.js 是否為新版
-  const APP_VERSION = 'v1.4 · 06/05 ✓';
+  const APP_VERSION = 'v1.5 · 06/05 ✓';
   const verChip = document.getElementById('verChip');
   if (verChip) verChip.textContent = APP_VERSION;
   console.log('[UBER 帳單整理工具] app.js 版本：' + APP_VERSION + '（含負金額待查、虛扣對應分頁）');
