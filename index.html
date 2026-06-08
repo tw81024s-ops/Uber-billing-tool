@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=9" />
+<link rel="stylesheet" href="styles.css?v=10" />
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
@@ -113,7 +113,7 @@
       <span class="step-num">03</span>
       <div>
         <h2>上傳虛扣／重複收款檔（可選）</h2>
-        <p class="muted">解析「虛扣單號總整理」與「重複收款 - N 張重複宅單」，在 Final 分頁 J 欄標重複收款次數、K 欄帶出原單號／調整目的／應退金額</p>
+        <p class="muted">解析「虛扣單號總整理」與「重複收款 - N 張重複宅單」，在 Final 分頁 E 需扣金額（虛扣／重複多收）、G 重複收款次數、B 原單號帶出調整目的</p>
       </div>
     </div>
     <div class="drop" id="dropXukou">
@@ -136,7 +136,7 @@
       <span class="step-num">04</span>
       <div>
         <h2>產出與下載</h2>
-        <p class="muted">Final 分頁（左塊合併帳單／右塊調整明細）＋ 待人工確認分頁</p>
+        <p class="muted">Final 分頁（10 欄：需扣金額 E／請賠金額 F 分開，修改後實際金額＝|C−E−F|）＋ 待人工確認分頁</p>
       </div>
     </div>
 
@@ -175,6 +175,6 @@
 <!-- Toast -->
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-<script src="app.js?v=9"></script>
+<script src="app.js?v=10"></script>
 </body>
 </html>
